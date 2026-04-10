@@ -8,8 +8,8 @@ module.exports = async function (req, res) {
     
     const target = new URL(urlPath, `https://137.131.176.224`);
     target.hostname = '137.131.176.224';
-    target.port = '443';
-    target.protocol = 'https:';
+    target.port = '80';
+    target.protocol = 'http:';
     
     // LOG 2: Tentando conectar
     console.log(`[2] Tentando conectar a: ${target.toString()}`);
