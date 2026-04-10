@@ -1,4 +1,4 @@
-// server.js - Versão estável e simplificada
+// server.js - Versão estável com suporte a DTunnel
 const express = require('express');
 const proxyHandler = require('./api/proxy');
 
@@ -8,35 +8,39 @@ const PORT = process.env.PORT || 3000;
 // Middleware básico
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.raw({ type: '*/*', limit: '10mb' }));
 
-// CORS básico
+// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Session-ID');
+  res.header('Access-Control-Expose-Headers', 'X-Session-ID');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
   next();
 });
 
-// Log simples
+// Log de requisições
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
 // Rota principal
-app.all('*', async (req, res) => {
-  try {
-    await proxyHandler(req, res);
-  } catch (error) {
-    console.error('Erro:', error.message);
-    res.status(500).json({ error: error.message });
-  }
+app.all('*', (req, res) => {
+  proxyHandler(req, res).catch(err => {
+    console.error('Handler error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 });
 
 // Inicia o servidor
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
+
+server.timeout = 120000; // 2 minutos
