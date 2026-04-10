@@ -1,7 +1,7 @@
 {
   "name": "azure-proxy-api",
   "version": "1.0.0",
-  "description": "Proxy API para Azure App Service",
+  "description": "Proxy API para DTunnel XHTTP",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
