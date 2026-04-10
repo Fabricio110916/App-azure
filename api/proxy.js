@@ -1,8 +1,8 @@
-// api/proxy.js - Proxy para XHTTP/DTunnel
+// api/proxy.js - Proxy para XHTTP/DTunnel com domínio correto
 const crypto = require('crypto');
 const https = require('https');
 
-// Agente HTTPS que ignora erros de SSL
+// Agente HTTPS que ignora erros de SSL (para teste)
 const agent = new https.Agent({
   rejectUnauthorized: false,
   keepAlive: true
@@ -27,13 +27,16 @@ module.exports = async function (req, res) {
     console.log(`[SESSION] Usando: ${sessionId.substring(0, 8)}...`);
   }
   
-  // Constrói URL com porta 443 explícita
-  const targetUrl = `https://137.131.176.224:443${req.url}`;
+  // 🔑 DOMÍNIO CORRETO do servidor XHTTP
+  const hostHeader = 'my.koom.pp.ua';
+  
+  // Constrói URL com o domínio (não mais com IP)
+  const targetUrl = `https://${hostHeader}:443${req.url}`;
   console.log(`[PROXY] ${req.method} ${targetUrl}`);
   
-  // Headers para XHTTP
+  // Headers para XHTTP com domínio correto
   const headers = {
-    'Host': '137.131.176.224',
+    'Host': hostHeader,
     'X-Session-ID': sessionId,
     'User-Agent': req.headers['user-agent'] || 'DTunnel/4.5.12',
     'Accept': '*/*',
@@ -85,8 +88,10 @@ module.exports = async function (req, res) {
     
   } catch (error) {
     console.error(`[ERROR] ${error.message}`);
-    // Retorna 400 como o XHTTP espera
-    res.status(400).json({ 
+    // Retorna 400 com o header X-Session-ID
+    res.status(400);
+    res.setHeader('X-Session-ID', sessionId);
+    res.json({ 
       error: 'missing X-Session-ID header',
       message: error.message
     });
