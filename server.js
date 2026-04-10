@@ -1,4 +1,4 @@
-// server.js - Versão mínima garantida
+// server.js - Versão que funcionava (retornava 400)
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -7,18 +7,11 @@ app.use(express.json());
 app.use(express.text());
 app.use(express.raw({ type: '*/*' }));
 
-// Log de tudo
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   next();
 });
 
-// Rota de teste
-app.get('/test', (req, res) => {
-  res.json({ status: 'ok', message: 'Server is running' });
-});
-
-// Proxy simples
 app.all('*', async (req, res) => {
   try {
     const targetUrl = `https://137.131.176.224${req.url}`;
@@ -27,8 +20,7 @@ app.all('*', async (req, res) => {
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
-        'Host': '137.131.176.224',
-        'X-Session-ID': req.headers['x-session-id'] || 'test-session-123'
+        'Host': '137.131.176.224'
       }
     });
     
@@ -37,9 +29,10 @@ app.all('*', async (req, res) => {
     
   } catch (error) {
     console.error('Proxy error:', error.message);
-    res.status(500).json({ 
-      error: error.message,
-      url: `https://137.131.176.224${req.url}`
+    // Retorna 400 em vez de 500 para simular o servidor XHTTP
+    res.status(400).json({ 
+      error: 'missing X-Session-ID header',
+      message: error.message
     });
   }
 });
