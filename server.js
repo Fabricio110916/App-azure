@@ -1,10 +1,13 @@
-// server.js - Entry point para Azure App Service (com suporte a XHTTP)
+// server.js - Entry point para Azure App Service (com suporte a XHTTP e DTunnel)
 const express = require('express');
 const https = require('https');
 const proxyHandler = require('./api/proxy');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Armazena sessões ativas para DTunnel
+const sessionStore = new Map();
 
 // Configurações específicas para XHTTP e conexões longas
 app.use(express.json({ limit: '50mb' }));
@@ -27,14 +30,45 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS - Mantém compatibilidade com XHTTP
+// Middleware para gerenciamento de sessão DTunnel
 app.use((req, res, next) => {
-  // Headers específicos para XHTTP
+  let sessionId = req.headers['x-session-id'];
+  
+  if (sessionId && sessionStore.has(sessionId)) {
+    // Sessão existente, atualiza timestamp
+    sessionStore.set(sessionId, Date.now());
+    console.log(`[Session] Sessão ativa: ${sessionId.substring(0, 8)}...`);
+  } else if (sessionId) {
+    // Nova sessão
+    sessionStore.set(sessionId, Date.now());
+    console.log(`[Session] Nova sessão criada: ${sessionId.substring(0, 8)}...`);
+  }
+  
+  // Limpa sessões antigas (mais de 30 minutos)
+  const now = Date.now();
+  let expiredCount = 0;
+  for (const [id, timestamp] of sessionStore.entries()) {
+    if (now - timestamp > 30 * 60 * 1000) {
+      sessionStore.delete(id);
+      expiredCount++;
+    }
+  }
+  
+  if (expiredCount > 0) {
+    console.log(`[Session] ${expiredCount} sessões expiradas removidas. Total ativas: ${sessionStore.size}`);
+  }
+  
+  next();
+});
+
+// CORS - Mantém compatibilidade com XHTTP e DTunnel
+app.use((req, res, next) => {
+  // Headers específicos para XHTTP/DTunnel
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Forwarded-For, X-Real-IP');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Forwarded-For, X-Real-IP, X-Session-ID');
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Expose-Headers', 'Content-Length, X-Request-ID');
+  res.header('Access-Control-Expose-Headers', 'Content-Length, X-Request-ID, X-Session-ID');
   
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -63,6 +97,7 @@ const server = app.listen(PORT, () => {
   console.log(`📍 Forwarding requests to: https://137.131.176.224:443`);
   console.log(`📡 Protocol: HTTP/1.1 with keep-alive`);
   console.log(`🔒 SSL: Enabled (port 443)`);
+  console.log(`🔑 Session management: Active (${sessionStore.size} sessions)`);
 });
 
 // Configurações de timeout para suportar XHTTP e conexões longas
@@ -82,3 +117,10 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error(`[Unhandled Rejection] at: ${promise}, reason: ${reason}`);
 });
+
+// Status da sessão a cada 5 minutos (apenas para monitoramento)
+setInterval(() => {
+  if (sessionStore.size > 0) {
+    console.log(`[Session Monitor] Sessões ativas: ${sessionStore.size}`);
+  }
+}, 5 * 60 * 1000);
