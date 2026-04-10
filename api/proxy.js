@@ -1,94 +1,37 @@
-// api/proxy.js - Versão com suporte a X-Session-ID para DTunnel
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
+// api/proxy.js - Versão estável
 module.exports = async function (req, res) {
   try {
-    const urlPath = req.url;
-    const target = new URL(urlPath, `https://137.131.176.224`);
-    target.hostname = '137.131.176.224';
-    target.port = '443';
-    target.protocol = 'https:';
-
-    // Gera ou mantém o X-Session-ID
-    let sessionId = req.headers['x-session-id'];
-    if (!sessionId) {
-      // Gera um ID de sessão único se não existir
-      sessionId = generateSessionId();
-      console.log(`[XHTTP] Nova sessão gerada: ${sessionId}`);
-    }
-
-    // Headers essenciais para DTunnel XHTTP
-    const requiredHeaders = {
-      'host': '137.131.176.224',
-      'x-session-id': sessionId,  // ← CRÍTICO para DTunnel
-      'x-forwarded-for': req.headers['x-forwarded-for'] || req.socket.remoteAddress,
-      'x-forwarded-proto': 'https',
-      'x-real-ip': req.socket.remoteAddress,
-      'user-agent': 'DTunnel/4.5.12',
-      'connection': 'keep-alive',
-      'accept': '*/*',
-      'accept-encoding': 'gzip, deflate, br',
-      'cache-control': 'no-cache',
-      'pragma': 'no-cache'
-    };
-
-    // Headers que não devem ser repassados
-    const headersToRemove = ['host', 'connection', 'content-length', 'transfer-encoding', 'upgrade'];
-    const filteredHeaders = { ...req.headers };
-    headersToRemove.forEach(header => delete filteredHeaders[header]);
-
-    // Combina os headers (prioriza os requeridos)
-    const finalHeaders = { ...filteredHeaders, ...requiredHeaders };
-
-    console.log(`[XHTTP] ${req.method} ${target.pathname}`);
-    console.log(`[XHTTP] Session ID: ${sessionId.substring(0, 8)}...`);
-
-    const fetchOptions = {
+    const url = `https://137.131.176.224${req.url}`;
+    
+    console.log(`Proxying: ${req.method} ${url}`);
+    
+    const response = await fetch(url, {
       method: req.method,
-      headers: finalHeaders,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
-      duplex: 'half',
-      signal: AbortSignal.timeout(120000) // 2 minutos para DTunnel
-    };
-
-    const response = await fetch(target.toString(), fetchOptions);
-
-    // Preserva o X-Session-ID na resposta
-    const responseSessionId = response.headers.get('x-session-id');
-    if (responseSessionId) {
-      console.log(`[XHTTP] Servidor respondeu com Session ID: ${responseSessionId.substring(0, 8)}...`);
-    }
-
-    console.log(`[XHTTP] Response: ${response.status}`);
-
-    // Configura headers da resposta
-    res.status(response.status);
-    response.headers.forEach((value, key) => {
-      const lowerKey = key.toLowerCase();
-      if (!['content-encoding', 'transfer-encoding'].includes(lowerKey)) {
-        res.setHeader(key, value);
-      }
+      headers: {
+        'host': '137.131.176.224',
+        'user-agent': req.headers['user-agent'] || 'Azure-Proxy',
+        'content-type': req.headers['content-type'] || 'application/json',
+        'x-session-id': req.headers['x-session-id'] || generateSessionId()
+      },
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
     });
     
-    // Garante que o X-Session-ID seja enviado de volta
-    res.setHeader('X-Session-ID', sessionId);
-
     const data = await response.text();
+    
+    res.status(response.status);
+    res.setHeader('X-Session-ID', req.headers['x-session-id']);
     res.send(data);
     
   } catch (error) {
-    console.error(`[XHTTP Error]`, error);
+    console.error('Proxy error:', error.message);
     res.status(500).json({ 
-      error: 'XHTTP Proxy failed', 
-      message: error.message,
-      hint: 'Verifique X-Session-ID'
+      error: 'Proxy failed', 
+      message: error.message 
     });
   }
 };
 
-// Função para gerar Session ID compatível com DTunnel
 function generateSessionId() {
-  const crypto = require('crypto');
-  // Gera um ID de 32 caracteres hex (formato comum para session IDs)
-  return crypto.randomBytes(16).toString('hex').toUpperCase();
+  return Math.random().toString(36).substring(2, 15) + 
+         Math.random().toString(36).substring(2, 15);
 }
