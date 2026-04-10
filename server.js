@@ -1,4 +1,4 @@
-// server.js - Versão com X-Session-ID para DTunnel
+// server.js - Versão correta para XHTTP (400 não é erro)
 const express = require('express');
 const crypto = require('crypto');
 const app = express();
@@ -8,10 +8,8 @@ app.use(express.json());
 app.use(express.text());
 app.use(express.raw({ type: '*/*' }));
 
-// Armazena sessões (simples)
 const sessions = new Map();
 
-// Gera Session ID único
 function generateSessionId() {
   return crypto.randomBytes(16).toString('hex');
 }
@@ -19,24 +17,16 @@ function generateSessionId() {
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   
-  // Pega ou cria Session ID
   let sessionId = req.headers['x-session-id'];
   if (!sessionId) {
     sessionId = generateSessionId();
     sessions.set(sessionId, Date.now());
-    console.log(`[NOVA SESSÃO] ${sessionId.substring(0, 8)}...`);
+  } else if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, Date.now());
   } else {
-    // Atualiza timestamp da sessão existente
-    if (sessions.has(sessionId)) {
-      sessions.set(sessionId, Date.now());
-      console.log(`[SESSÃO EXISTENTE] ${sessionId.substring(0, 8)}...`);
-    } else {
-      sessions.set(sessionId, Date.now());
-      console.log(`[SESSÃO REATIVADA] ${sessionId.substring(0, 8)}...`);
-    }
+    sessions.set(sessionId, Date.now());
   }
   
-  // Guarda sessionId para uso posterior
   req.sessionId = sessionId;
   next();
 });
@@ -44,8 +34,6 @@ app.use((req, res, next) => {
 app.all('*', async (req, res) => {
   try {
     const targetUrl = `https://137.131.176.224${req.url}`;
-    console.log(`[PROXY] ${req.method} ${targetUrl}`);
-    console.log(`[PROXY] Session ID enviado: ${req.sessionId.substring(0, 8)}...`);
     
     const response = await fetch(targetUrl, {
       method: req.method,
@@ -59,38 +47,41 @@ app.all('*', async (req, res) => {
       body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined
     });
     
-    const text = await response.text();
-    console.log(`[RESPOSTA] Status: ${response.status}`);
+    // Lê a resposta como buffer/binário (importante para XHTTP)
+    const buffer = await response.arrayBuffer();
     
-    // Envia o mesmo Session ID de volta
+    // Repassa o status EXATAMENTE como veio (incluindo 400)
+    res.status(response.status);
+    
+    // Repassa todos os headers
+    response.headers.forEach((value, key) => {
+      res.setHeader(key, value);
+    });
+    
+    // Garante o Session ID na resposta
     res.setHeader('X-Session-ID', req.sessionId);
-    res.status(response.status).send(text);
+    
+    // Envia o corpo binário
+    res.send(Buffer.from(buffer));
     
   } catch (error) {
-    console.error('[ERRO]', error.message);
-    res.status(400).json({ 
-      error: 'missing X-Session-ID header',
-      message: error.message
-    });
+    // Só trata erro de CONEXÃO, não erro HTTP
+    console.error('[CONNECTION ERROR]', error.message);
+    res.status(500).send(error.message);
   }
 });
 
-// Limpa sessões antigas a cada 5 minutos
+// Limpa sessões antigas
 setInterval(() => {
   const now = Date.now();
-  let expired = 0;
   for (const [id, timestamp] of sessions.entries()) {
-    if (now - timestamp > 30 * 60 * 1000) { // 30 minutos
+    if (now - timestamp > 30 * 60 * 1000) {
       sessions.delete(id);
-      expired++;
     }
-  }
-  if (expired > 0) {
-    console.log(`[LIMPEZA] ${expired} sessões expiradas. Total ativas: ${sessions.size}`);
   }
 }, 5 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Proxy para: https://137.131.176.224`);
+  console.log(`XHTTP Proxy running on port ${PORT}`);
+  console.log(`Forwarding to: https://137.131.176.224`);
 });
