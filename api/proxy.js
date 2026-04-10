@@ -1,37 +1,103 @@
-// api/proxy.js - Versão estável
+// api/proxy.js - Com X-Session-ID fixo para DTunnel
+const crypto = require('crypto');
+
+// Armazena sessões em memória (simples, sem Map complexo)
+let activeSessions = {};
+
 module.exports = async function (req, res) {
   try {
-    const url = `https://137.131.176.224${req.url}`;
+    // Pega ou cria o Session ID
+    let sessionId = req.headers['x-session-id'];
     
-    console.log(`Proxying: ${req.method} ${url}`);
+    if (!sessionId) {
+      sessionId = crypto.randomBytes(16).toString('hex');
+      activeSessions[sessionId] = Date.now();
+      console.log(`[SESSION] Nova sessão: ${sessionId.substring(0, 8)}...`);
+    } else {
+      // Atualiza timestamp da sessão existente
+      if (activeSessions[sessionId]) {
+        activeSessions[sessionId] = Date.now();
+      } else {
+        activeSessions[sessionId] = Date.now();
+        console.log(`[SESSION] Sessão reativada: ${sessionId.substring(0, 8)}...`);
+      }
+    }
     
-    const response = await fetch(url, {
+    // Limpa sessões antigas (30 minutos)
+    const now = Date.now();
+    for (const [id, timestamp] of Object.entries(activeSessions)) {
+      if (now - timestamp > 30 * 60 * 1000) {
+        delete activeSessions[id];
+        console.log(`[SESSION] Sessão expirada: ${id.substring(0, 8)}...`);
+      }
+    }
+    
+    // Constrói a URL de destino
+    const targetUrl = `https://137.131.176.224${req.url}`;
+    
+    console.log(`[PROXY] ${req.method} ${targetUrl}`);
+    console.log(`[PROXY] Session ID: ${sessionId.substring(0, 8)}...`);
+    
+    // Prepara os headers
+    const headers = {
+      'Host': '137.131.176.224',
+      'X-Session-ID': sessionId,
+      'User-Agent': req.headers['user-agent'] || 'DTunnel-Client/4.5',
+      'Accept': req.headers['accept'] || '*/*',
+      'Accept-Encoding': req.headers['accept-encoding'] || 'gzip, deflate, br',
+      'Connection': 'keep-alive'
+    };
+    
+    // Copia headers relevantes do request original
+    if (req.headers['content-type']) {
+      headers['Content-Type'] = req.headers['content-type'];
+    }
+    
+    if (req.headers['authorization']) {
+      headers['Authorization'] = req.headers['authorization'];
+    }
+    
+    // Prepara o body
+    let body = undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      body = req.body;
+      if (typeof body === 'object') {
+        body = JSON.stringify(body);
+        headers['Content-Type'] = 'application/json';
+      }
+    }
+    
+    // Faz a requisição
+    const response = await fetch(targetUrl, {
       method: req.method,
-      headers: {
-        'host': '137.131.176.224',
-        'user-agent': req.headers['user-agent'] || 'Azure-Proxy',
-        'content-type': req.headers['content-type'] || 'application/json',
-        'x-session-id': req.headers['x-session-id'] || generateSessionId()
-      },
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
+      headers: headers,
+      body: body,
+      timeout: 30000
     });
     
-    const data = await response.text();
+    console.log(`[PROXY] Response: ${response.status}`);
     
+    // Lê a resposta
+    let data;
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+    
+    // Envia a resposta
     res.status(response.status);
-    res.setHeader('X-Session-ID', req.headers['x-session-id']);
+    res.setHeader('X-Session-ID', sessionId);
+    res.setHeader('Content-Type', contentType || 'application/json');
     res.send(data);
     
   } catch (error) {
-    console.error('Proxy error:', error.message);
-    res.status(500).json({ 
-      error: 'Proxy failed', 
-      message: error.message 
+    console.error(`[PROXY ERROR]`, error.message);
+    res.status(500).json({
+      error: 'Proxy failed',
+      message: error.message,
+      sessionId: req.headers['x-session-id'] || 'new session needed'
     });
   }
 };
-
-function generateSessionId() {
-  return Math.random().toString(36).substring(2, 15) + 
-         Math.random().toString(36).substring(2, 15);
-}
