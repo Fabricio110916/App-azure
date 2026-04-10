@@ -1,5 +1,5 @@
 {
-  "name": "simple-proxy",
+  "name": "proxy-transparente",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
