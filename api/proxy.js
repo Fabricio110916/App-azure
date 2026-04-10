@@ -1,71 +1,83 @@
-// api/proxy.js - Versão com diagnóstico
+// api/proxy.js - Versão para XHTTP na porta 443
 module.exports = async function (req, res) {
   try {
     const urlPath = req.url;
     
-    // LOG 1: Recebemos a requisição
-    console.log(`[1] Requisição recebida: ${req.method} ${urlPath}`);
-    
+    // Mantém HTTPS e porta 443
     const target = new URL(urlPath, `https://137.131.176.224`);
     target.hostname = '137.131.176.224';
-    target.port = '80';
-    target.protocol = 'http:';
+    target.port = '443';
+    target.protocol = 'https:';
+
+    // Headers essenciais para XHTTP
+    const forwardedHeaders = {
+      // Preserva o host original que o servidor espera
+      'host': '137.131.176.224',
+      'x-forwarded-for': req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+      'x-forwarded-proto': 'https',
+      'x-forwarded-host': req.headers.host,
+      'x-real-ip': req.socket.remoteAddress,
+      // Mantém headers originais importantes
+      'user-agent': req.headers['user-agent'] || 'XHTTP-Client',
+      'accept': req.headers['accept'] || '*/*',
+      'accept-encoding': req.headers['accept-encoding'] || 'gzip, deflate, br',
+      'connection': 'keep-alive'
+    };
+
+    // Headers que NÃO devem ser repassados
+    const blockedHeaders = ['host', 'content-length', 'transfer-encoding'];
     
-    // LOG 2: Tentando conectar
-    console.log(`[2] Tentando conectar a: ${target.toString()}`);
+    const filteredHeaders = { ...req.headers };
+    blockedHeaders.forEach(header => delete filteredHeaders[header]);
     
-    // Opção: tentar HTTP em vez de HTTPS para teste
-    // Descomente a linha abaixo para testar com HTTP:
-    // target.protocol = 'http:'; target.port = '80';
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos timeout
-    
-    const response = await fetch(target.toString(), {
+    // Combina os headers
+    const finalHeaders = { ...forwardedHeaders, ...filteredHeaders };
+
+    // Configuração específica para XHTTP
+    const fetchOptions = {
       method: req.method,
-      headers: {
-        ...req.headers,
-        'Host': '137.131.176.224'
-      },
+      headers: finalHeaders,
       body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
-      signal: controller.signal
-    }).catch(err => {
-      console.log(`[3] ERRO DETALHADO:`, {
-        name: err.name,
-        message: err.message,
-        code: err.code,
-        cause: err.cause
-      });
-      throw err;
-    });
-    
-    clearTimeout(timeoutId);
-    
-    // LOG 3: Conexão bem sucedida
-    console.log(`[3] Conexão OK! Status: ${response.status}`);
-    
+      // Importante para XHTTP
+      duplex: 'half',
+      // Ignora SSL se necessário (para teste)
+      // agent: new https.Agent({ rejectUnauthorized: false })
+    };
+
+    console.log(`[XHTTP Proxy] ${req.method} ${target.toString()}`);
+    console.log(`[XHTTP Proxy] Headers:`, Object.keys(finalHeaders));
+
+    const response = await fetch(target.toString(), fetchOptions);
+
+    // Log do status para debug
+    console.log(`[XHTTP Proxy] Response: ${response.status} ${response.statusText}`);
+
+    // Se for 400, log mais detalhes
+    if (response.status === 400) {
+      const errorText = await response.text();
+      console.log(`[XHTTP Proxy] 400 Error body:`, errorText);
+    }
+
+    // Repassa headers da resposta
     res.status(response.status);
     response.headers.forEach((value, key) => {
-      if (!['content-encoding', 'transfer-encoding'].includes(key)) {
+      const lowerKey = key.toLowerCase();
+      // Preserva headers importantes para XHTTP
+      if (!['content-encoding', 'transfer-encoding'].includes(lowerKey)) {
         res.setHeader(key, value);
       }
     });
-    
+
+    // Para respostas 400, retorna o corpo original do servidor
     const data = await response.text();
     res.send(data);
     
   } catch (error) {
-    console.error(`[ERRO FINAL]`, {
-      message: error.message,
-      code: error.code,
-      cause: error.cause?.message
-    });
-    
+    console.error(`[XHTTP Proxy Error]`, error);
     res.status(500).json({ 
-      error: 'Proxy failed', 
+      error: 'XHTTP Proxy failed', 
       message: error.message,
-      code: error.code || 'unknown',
-      details: error.cause?.message || 'Verifique se o destino está acessível'
+      hint: 'Verifique se o servidor XHTTP está aceitando conexões externas'
     });
   }
 };
