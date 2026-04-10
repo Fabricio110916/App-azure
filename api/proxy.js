@@ -1,5 +1,4 @@
-// api/proxy.js - Solução definitiva para XHTTP no Azure
-// IMPORTANTE: Ignora erros de certificado SSL (necessário para alguns servidores)
+// api/proxy.js - Versão com suporte a X-Session-ID para DTunnel
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 module.exports = async function (req, res) {
@@ -10,42 +9,59 @@ module.exports = async function (req, res) {
     target.port = '443';
     target.protocol = 'https:';
 
-    // Headers essenciais para o servidor XHTTP
-    const forwardedHeaders = {
+    // Gera ou mantém o X-Session-ID
+    let sessionId = req.headers['x-session-id'];
+    if (!sessionId) {
+      // Gera um ID de sessão único se não existir
+      sessionId = generateSessionId();
+      console.log(`[XHTTP] Nova sessão gerada: ${sessionId}`);
+    }
+
+    // Headers essenciais para DTunnel XHTTP
+    const requiredHeaders = {
       'host': '137.131.176.224',
+      'x-session-id': sessionId,  // ← CRÍTICO para DTunnel
       'x-forwarded-for': req.headers['x-forwarded-for'] || req.socket.remoteAddress,
       'x-forwarded-proto': 'https',
-      'x-forwarded-host': req.headers.host,
       'x-real-ip': req.socket.remoteAddress,
-      'user-agent': req.headers['user-agent'] || 'XHTTP-Client',
-      'accept': req.headers['accept'] || '*/*',
+      'user-agent': 'DTunnel/4.5.12',
       'connection': 'keep-alive',
-      'accept-encoding': 'gzip, deflate, br'
+      'accept': '*/*',
+      'accept-encoding': 'gzip, deflate, br',
+      'cache-control': 'no-cache',
+      'pragma': 'no-cache'
     };
 
     // Headers que não devem ser repassados
-    const headersToRemove = ['host', 'connection', 'content-length', 'transfer-encoding', 'upgrade', 'upgrade-insecure-requests'];
+    const headersToRemove = ['host', 'connection', 'content-length', 'transfer-encoding', 'upgrade'];
     const filteredHeaders = { ...req.headers };
     headersToRemove.forEach(header => delete filteredHeaders[header]);
 
-    // Combina os headers
-    const finalHeaders = { ...forwardedHeaders, ...filteredHeaders };
+    // Combina os headers (prioriza os requeridos)
+    const finalHeaders = { ...filteredHeaders, ...requiredHeaders };
+
+    console.log(`[XHTTP] ${req.method} ${target.pathname}`);
+    console.log(`[XHTTP] Session ID: ${sessionId.substring(0, 8)}...`);
 
     const fetchOptions = {
       method: req.method,
       headers: finalHeaders,
       body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
       duplex: 'half',
-      // Timeout generoso para XHTTP
-      signal: AbortSignal.timeout(60000)
+      signal: AbortSignal.timeout(120000) // 2 minutos para DTunnel
     };
 
-    console.log(`[XHTTP Proxy] ${req.method} ${target.toString()}`);
     const response = await fetch(target.toString(), fetchOptions);
 
-    console.log(`[XHTTP Proxy] Response: ${response.status} ${response.statusText}`);
+    // Preserva o X-Session-ID na resposta
+    const responseSessionId = response.headers.get('x-session-id');
+    if (responseSessionId) {
+      console.log(`[XHTTP] Servidor respondeu com Session ID: ${responseSessionId.substring(0, 8)}...`);
+    }
 
-    // Repassa os headers da resposta
+    console.log(`[XHTTP] Response: ${response.status}`);
+
+    // Configura headers da resposta
     res.status(response.status);
     response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
@@ -53,16 +69,26 @@ module.exports = async function (req, res) {
         res.setHeader(key, value);
       }
     });
+    
+    // Garante que o X-Session-ID seja enviado de volta
+    res.setHeader('X-Session-ID', sessionId);
 
     const data = await response.text();
     res.send(data);
     
   } catch (error) {
-    console.error(`[XHTTP Proxy Error]`, error);
+    console.error(`[XHTTP Error]`, error);
     res.status(500).json({ 
       error: 'XHTTP Proxy failed', 
       message: error.message,
-      hint: 'Verifique se o servidor XHTTP está aceitando conexões externas'
+      hint: 'Verifique X-Session-ID'
     });
   }
 };
+
+// Função para gerar Session ID compatível com DTunnel
+function generateSessionId() {
+  const crypto = require('crypto');
+  // Gera um ID de 32 caracteres hex (formato comum para session IDs)
+  return crypto.randomBytes(16).toString('hex').toUpperCase();
+}
