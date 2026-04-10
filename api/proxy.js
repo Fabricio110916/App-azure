@@ -1,41 +1,25 @@
-// api/proxy.js - Proxy transparente (passa tudo sem modificar)
-module.exports = async function (req, res) {
-  const targetUrl = `https://my.koom.pp.ua:443${req.url}`;
-  
-  try {
-    // Remove headers que podem interferir
-    const cleanHeaders = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-      // Filtra headers problemáticos
-      if (!['host', 'connection', 'content-length', 'transfer-encoding'].includes(key.toLowerCase())) {
-        cleanHeaders[key] = value;
-      }
-    }
-    
-    // Adiciona headers corretos
-    cleanHeaders['Host'] = 'my.koom.pp.ua';
-    
-    const response = await fetch(targetUrl, {
-      method: req.method,
-      headers: cleanHeaders,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
-      duplex: 'half'
-    });
-    
-    // Passa o status
-    res.status(response.status);
-    
-    // Passa todos os headers
-    response.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-    
-    // Passa o corpo
-    const data = await response.text();
-    res.send(data);
-    
-  } catch (error) {
-    console.error('Proxy error:', error);
-    res.status(500).send(error.message);
-  }
+import { NextRequest } from "next/server";
+
+export const config = {
+  runtime: "edge", // roda na Edge Function
 };
+
+export default async function handler(req: NextRequest) {
+  const url = new URL(req.url);
+
+  // Monta a URL de destino no seu servidor
+  const target = `http://deta.titania.pp.ua${url.pathname}${url.search}`;
+
+  // Repassa a requisição original
+  const response = await fetch(target, {
+    method: req.method,
+    headers: req.headers,
+    body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
+  });
+
+  // Retorna a resposta original para o cliente
+  return new Response(response.body, {
+    status: response.status,
+    headers: response.headers,
+  });
+}
