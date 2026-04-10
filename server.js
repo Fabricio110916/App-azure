@@ -1,46 +1,49 @@
-// server.js - Versão estável com suporte a DTunnel
+// server.js - Versão mínima garantida
 const express = require('express');
-const proxyHandler = require('./api/proxy');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware básico
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.raw({ type: '*/*', limit: '10mb' }));
+app.use(express.json());
+app.use(express.text());
+app.use(express.raw({ type: '*/*' }));
 
-// CORS
+// Log de tudo
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-Session-ID');
-  res.header('Access-Control-Expose-Headers', 'X-Session-ID');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
+
+// Rota de teste
+app.get('/test', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// Proxy simples
+app.all('*', async (req, res) => {
+  try {
+    const targetUrl = `https://137.131.176.224${req.url}`;
+    console.log(`Proxying to: ${targetUrl}`);
+    
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        'Host': '137.131.176.224',
+        'X-Session-ID': req.headers['x-session-id'] || 'test-session-123'
+      }
+    });
+    
+    const text = await response.text();
+    res.status(response.status).send(text);
+    
+  } catch (error) {
+    console.error('Proxy error:', error.message);
+    res.status(500).json({ 
+      error: error.message,
+      url: `https://137.131.176.224${req.url}`
+    });
   }
-  next();
 });
 
-// Log de requisições
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
 });
-
-// Rota principal
-app.all('*', (req, res) => {
-  proxyHandler(req, res).catch(err => {
-    console.error('Handler error:', err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-});
-
-// Inicia o servidor
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
-});
-
-server.timeout = 120000; // 2 minutos
